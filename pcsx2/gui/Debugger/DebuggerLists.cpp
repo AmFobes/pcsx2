@@ -498,6 +498,189 @@ void BreakpointList::onDoubleClick(int itemIndex, const wxPoint& point)
 	gotoBreakpointAddress(itemIndex);
 }
 
+//
+// WatchpointList
+//
+
+enum { WPL_REG, WPL_CONDITION, WPL_ENABLE, WPL_COLUMNCOUNT };
+
+enum WatchpointListMenuIdentifiers
+{
+	ID_WATCHPOINTLIST_ENABLE = 1,
+	ID_WATCHPOINTLIST_DISABLE,
+	ID_WATCHPOINTLIST_EDIT,
+	ID_WATCHPOINTLIST_ADDNEW,
+};
+
+GenericListViewColumn watchpointColumns[WPL_COLUMNCOUNT] = {
+	{ L"Register",		0.25f },
+	{ L"Condition",		0.50f },
+	{ L"Enabled",		0.25f }
+};
+
+WatchpointList::WatchpointList(wxWindow* parent, DebugInterface* _cpu, CtrlDisassemblyView* _disassembly)
+	: GenericListView(parent,watchpointColumns,WPL_COLUMNCOUNT), cpu(_cpu),disasm(_disassembly)
+{
+}
+
+void WatchpointList::onPopupClick(wxCommandEvent& evt)
+{
+	int index = GetFirstSelected();
+	switch (evt.GetId())
+	{
+	case ID_WATCHPOINTLIST_ENABLE:
+	case ID_WATCHPOINTLIST_DISABLE:
+		toggleEnabled(index);
+		break;
+	case ID_WATCHPOINTLIST_EDIT:
+		editWatchpoint(index);
+		break;
+	case ID_WATCHPOINTLIST_ADDNEW:
+		postEvent(debEVT_WATCHPOINTWINDOW,0);
+		break;
+	default:
+		wxMessageBox( L"Unimplemented.",  L"Unimplemented.", wxICON_INFORMATION);
+		break;
+	}
+}
+
+wxString WatchpointList::getColumnText(int row, int col) const
+{
+	FastFormatUnicode dest;
+	if (row == -1) return L"Invalid";
+	WatchPoint item = WatchPoint::watchPoints_.at(row);
+	
+	switch (col)
+	{
+	case WPL_REG:
+		{
+			dest.Write("(%s) %s | %s",
+			item.cond.debug == &r5900Debug ? "R5900" : "R300",
+			cpu->getRegisterCategoryName(item.cond.regCat),
+			cpu->getRegisterName(item.cond.regCat,item.cond.regNum));
+		}
+		break;
+	case WPL_CONDITION:
+		{
+			if(item.cond.onChange)
+			{
+				dest.Write("On Change");
+			}
+			else{
+				wxString myString("TEXT");
+				switch(item.cond.compType)
+				{
+					case WPC_EQU:
+						dest.Write(L"= %s", item.cond.compVal.ToStringBigEndian().ToUTF8().data());
+					break;
+					case WPC_GT:
+						dest.Write(L"> %s",item.cond.compVal.ToStringBigEndian().ToUTF8().data());
+					break;
+					case WPC_GTE:
+						dest.Write(L"≥ %s",item.cond.compVal.ToStringBigEndian().ToUTF8().data());
+					break;
+					case WPC_LT:
+						dest.Write(L"< %s",item.cond.compVal.ToStringBigEndian().ToUTF8().data());
+					break;
+					case WPC_LTE:
+						dest.Write(L"≤ %s",item.cond.compVal.ToStringBigEndian().ToUTF8().data());
+					break;
+				}
+			}
+		}
+		break;
+	case WPL_ENABLE:
+		{
+			dest.Write("%s",item.enabled ? "true" : "false");
+		}
+		break;
+	default:
+		return L"Invalid";
+	}
+
+	return dest;
+}
+
+int WatchpointList::getRowCount()
+{
+	return WatchPoint::watchPoints_.size();
+}
+
+void WatchpointList::onDoubleClick(int itemIndex, const wxPoint &point)
+{
+	gotoRegister(itemIndex);
+}
+
+void WatchpointList::onRightClick(int itemIndex, const wxPoint& point)
+{
+	showMenu(point);
+}
+
+void WatchpointList::onKeyDown(int key)
+{
+	int sel = GetFirstSelected();
+	switch (key)
+	{
+	case WXK_DELETE:
+		removeWatchpoint(sel);
+		break;
+	case WXK_RETURN:
+		editWatchpoint(sel);
+		break;
+	case WXK_SPACE:
+		toggleEnabled(sel);
+		break;
+	}
+}
+
+int WatchpointList::getTotalWatchpointCount()
+{
+	return WatchPoint::watchPoints_.size();
+}
+
+void WatchpointList::editWatchpoint(int itemIndex)
+{
+
+}
+
+void WatchpointList::toggleEnabled(int itemIndex)
+{
+	WatchPoint::watchPoints_.at(itemIndex).enabled = !WatchPoint::watchPoints_.at(itemIndex).enabled;
+}
+
+void WatchpointList::removeWatchpoint(int itemIndex)
+{
+	WatchPoint::watchPoints_.erase(WatchPoint::watchPoints_.begin() + itemIndex);
+}
+
+void WatchpointList::showMenu(const wxPoint& pos)
+{
+	int index = GetFirstSelected();
+
+	wxMenu menu;
+	if (index != -1)
+	{
+		
+		WatchPoint selectedWatchpoint = WatchPoint::watchPoints_.at(index);
+
+		if(!selectedWatchpoint.enabled)
+		menu.AppendCheckItem(ID_WATCHPOINTLIST_ENABLE,	L"Enable");
+		else
+		menu.AppendCheckItem(ID_WATCHPOINTLIST_DISABLE, L"Disable");
+
+		menu.Append(ID_WATCHPOINTLIST_EDIT,				L"Edit");
+		menu.AppendSeparator();
+	}
+
+	menu.Append(ID_WATCHPOINTLIST_ADDNEW,				L"Add new");
+
+	menu.Bind(wxEVT_MENU, &WatchpointList::onPopupClick, this);
+	PopupMenu(&menu,pos);
+}
+
+void WatchpointList::gotoRegister(int itemIndex){
+
+}
 
 //
 // ThreadList

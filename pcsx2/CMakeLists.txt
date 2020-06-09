@@ -230,7 +230,8 @@ set(pcsx2DebugToolsSources
 	DebugTools/DisR5900asm.cpp
 	DebugTools/DisVU0Micro.cpp
 	DebugTools/DisVU1Micro.cpp
-	DebugTools/BiosDebugData.cpp)
+	DebugTools/BiosDebugData.cpp
+	DebugTools/Watchpoints.cpp)
 
 # DebugTools headers
 set(pcsx2DebugToolsHeaders
@@ -247,7 +248,8 @@ set(pcsx2DebugToolsHeaders
 	DebugTools/DisASM.h
 	DebugTools/DisVUmicro.h
 	DebugTools/DisVUops.h
-	DebugTools/BiosDebugData.h)
+	DebugTools/BiosDebugData.h
+	DebugTools/Watchpoints.h)
 
 # gui sources
 set(pcsx2GuiSources
@@ -276,6 +278,7 @@ set(pcsx2GuiSources
 	gui/Dialogs/PickUserModeDialog.cpp
 	gui/Dialogs/SysConfigDialog.cpp
 	gui/Debugger/BreakpointWindow.cpp
+	gui/Debugger/WatchpointWindow.cpp
 	gui/Debugger/CtrlDisassemblyView.cpp
 	gui/Debugger/CtrlRegisterList.cpp
 	gui/Debugger/CtrlMemView.cpp
@@ -329,6 +332,7 @@ set(pcsx2GuiHeaders
 	gui/ConsoleLogger.h
 	gui/CpuUsageProvider.h
 	gui/Debugger/BreakpointWindow.h
+	gui/Debugger/WatchpointWindow.h
 	gui/Debugger/CtrlDisassemblyView.h
 	gui/Debugger/CtrlMemView.h
 	gui/Debugger/CtrlRegisterList.h

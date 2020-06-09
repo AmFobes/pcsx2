@@ -36,7 +36,7 @@ u32 __fastcall standardizeBreakpointAddress(u32 addr)
 
 	if (addr >= 0xBFC00000 && addr <= 0xBFFFFFFF)
 		addr &= 0x1FFFFFFF;
-
+	
 	addr &= 0x7FFFFFFF;
 	
 	if ((addr >> 28) == 2 || (addr >> 28) == 3)

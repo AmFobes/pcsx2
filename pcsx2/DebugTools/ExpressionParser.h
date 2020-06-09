@@ -37,6 +37,7 @@ public:
 	virtual bool getMemoryValue(u32 address, int size, u64& dest, char* error) = 0;
 };
 
+bool parseNumber(const char* str, int defaultrad, int len, u64& result);
 bool initPostfixExpression(const char* infix, IExpressionFunctions* funcs, PostfixExpression& dest);
 bool parsePostfixExpression(PostfixExpression& exp, IExpressionFunctions* funcs, u64& dest);
 bool parseExpression(const char* exp, IExpressionFunctions* funcs, u64& dest);

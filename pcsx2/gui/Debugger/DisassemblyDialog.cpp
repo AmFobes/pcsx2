@@ -19,8 +19,10 @@
 #include "DebugTools/DebugInterface.h"
 #include "DebugTools/DisassemblyManager.h"
 #include "DebugTools/Breakpoints.h"
+#include "DebugTools/Watchpoints.h"
 #include "DebugTools/MipsStackWalk.h"
 #include "BreakpointWindow.h"
+#include "WatchpointWindow.h"
 #include "PathDefs.h"
 #include "wx/busyinfo.h"
 
@@ -40,6 +42,7 @@ wxBEGIN_EVENT_TABLE(DisassemblyDialog, wxFrame)
    EVT_COMMAND( wxID_ANY, debEVT_STEPOUT, DisassemblyDialog::onDebuggerEvent )
    EVT_COMMAND( wxID_ANY, debEVT_UPDATE, DisassemblyDialog::onDebuggerEvent )
    EVT_COMMAND( wxID_ANY, debEVT_BREAKPOINTWINDOW, DisassemblyDialog::onDebuggerEvent )
+   EVT_COMMAND( wxID_ANY, debEVT_WATCHPOINTWINDOW, DisassemblyDialog::onDebuggerEvent )
    EVT_COMMAND( wxID_ANY, debEVT_MAPLOADED, DisassemblyDialog::onDebuggerEvent )
    EVT_SIZE(DisassemblyDialog::onSizeEvent)
    EVT_CLOSE( DisassemblyDialog::onClose )
@@ -74,7 +77,6 @@ DebuggerHelpDialog::DebuggerHelpDialog(wxWindow* parent)
 	sizer->Add(textControl,1,wxEXPAND);
 	SetSizerAndFit(sizer);
 }
-
 
 CpuTabPage::CpuTabPage(wxWindow* parent, DebugInterface* _cpu)
 	: wxPanel(parent), cpu(_cpu)
@@ -113,6 +115,9 @@ CpuTabPage::CpuTabPage(wxWindow* parent, DebugInterface* _cpu)
 	breakpointList = new BreakpointList(bottomTabs,cpu,disassembly);
 	bottomTabs->AddPage(breakpointList,L"Breakpoints");
 	
+	watchpointList = new WatchpointList(bottomTabs,cpu,disassembly);
+	bottomTabs->AddPage(watchpointList,L"Watchpoints");
+
 	threadList = NULL;
 	stackFrames = NULL;
 	if (cpu == &r5900Debug)
@@ -188,6 +193,8 @@ void CpuTabPage::setBottomTabPage(wxWindow* win)
 void CpuTabPage::update()
 {
 	breakpointList->reloadBreakpoints();
+
+	watchpointList->update();
 
 	if (threadList != NULL && cpu->isAlive())
 	{
@@ -494,6 +501,17 @@ void DisassemblyDialog::onBreakpointClick(wxCommandEvent& evt)
 	}
 }
 
+void DisassemblyDialog::onWatchpointClick(wxCommandEvent& evt){
+	if(currentCpu == NULL)
+		return;
+
+	WatchpointWindow wpw(this,currentCpu->getCpu());
+	if(wpw.ShowModal() == wxID_OK){
+		wpw.addWatchpoint();
+		update();
+	}
+}
+
 void DisassemblyDialog::onDebuggerEvent(wxCommandEvent& evt)
 {
 	wxEventType type = evt.GetEventType();
@@ -554,7 +572,12 @@ void DisassemblyDialog::onDebuggerEvent(wxCommandEvent& evt)
 	{
 		wxCommandEvent evt;
 		onBreakpointClick(evt);
-	} else if (type == debEVT_MAPLOADED)
+	} else if (type == debEVT_WATCHPOINTWINDOW)
+	{
+		wxCommandEvent evt;
+		onWatchpointClick(evt);
+	} 
+	else if (type == debEVT_MAPLOADED)
 	{
 		wxBusyInfo wait("Please wait, Reloading ELF functions");
 		eeTab->clearSymbolMap();
@@ -630,11 +653,11 @@ void DisassemblyDialog::setDebugMode(bool debugMode, bool switchPC)
 
 		if (debugMode)
 		{
-				if (!CBreakPoints::GetBreakpointTriggered())
-				{
-					wxBusyInfo wait("Please wait, Reading ELF functions");
-					populate();
-				}
+			if (!CBreakPoints::GetBreakpointTriggered() || !WatchPoint::WatchPointTriggered)
+			{
+				wxBusyInfo wait("Please wait, Reading ELF functions");
+				populate();
+			}
 			CBreakPoints::ClearTemporaryBreakPoints();
 			breakRunButton->SetLabel(L"Run");
 
@@ -642,7 +665,7 @@ void DisassemblyDialog::setDebugMode(bool debugMode, bool switchPC)
 			stepIntoButton->Enable(true);
 			stepOutButton->Enable(currentCpu == eeTab);
 
-			if (switchPC || CBreakPoints::GetBreakpointTriggered())
+			if (switchPC || CBreakPoints::GetBreakpointTriggered() || WatchPoint::WatchPointTriggered)
 				gotoPc();
 			
 			if (CBreakPoints::GetBreakpointTriggered())
@@ -653,6 +676,13 @@ void DisassemblyDialog::setDebugMode(bool debugMode, bool switchPC)
 				CBreakPoints::SetSkipFirst(0);
 			}
 
+			if(WatchPoint::WatchPointTriggered)
+			{
+				if (currentCpu != NULL)
+					currentCpu->getDisassembly()->SetFocus();
+				WatchPoint::WatchPointTriggered = false;
+			}
+			
 			if (currentCpu != NULL)
 				currentCpu->loadCycles();
 		} else {

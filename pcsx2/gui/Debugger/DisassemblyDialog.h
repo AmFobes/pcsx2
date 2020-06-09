@@ -71,6 +71,7 @@ private:
 	wxNotebook* bottomTabs;
 	wxNotebook* leftTabs;
 	BreakpointList* breakpointList;
+	WatchpointList* watchpointList;
 	wxStaticText* cyclesText;
 	ThreadList* threadList;
 	StackFramesList* stackFrames;
@@ -105,6 +106,7 @@ protected:
 	void onDebuggerEvent(wxCommandEvent& evt);
 	void onPageChanging(wxCommandEvent& evt);
 	void onBreakpointClick(wxCommandEvent& evt);
+	void onWatchpointClick(wxCommandEvent& evt);
 	void onSizeEvent(wxSizeEvent& event);
 	void onClose(wxCloseEvent& evt);
 	void stepOver();

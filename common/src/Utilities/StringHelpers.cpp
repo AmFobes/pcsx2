@@ -40,6 +40,11 @@ wxString u128::ToString() const
     return pxsFmt(L"0x%08X.%08X.%08X.%08X", _u32[0], _u32[1], _u32[2], _u32[3]);
 }
 
+wxString u128::ToString128() const
+{
+    return pxsFmt(L"0x%08X%08X%08X%08X", _u32[0], _u32[1], _u32[2], _u32[3]);
+}
+
 wxString u128::ToString64() const
 {
     return pxsFmt(L"0x%08X%08X.%08X%08X", _u32[0], _u32[1], _u32[2], _u32[3]);
@@ -51,6 +56,31 @@ wxString u128::ToString8() const
     result.Write(L"0x%02X.%02X", _u8[0], _u8[1]);
     for (uint i = 2; i < 16; i += 2)
         result.Write(L".%02X.%02X", _u8[i], _u8[i + 1]);
+    return result;
+}
+
+wxString u128::ToStringBigEndian() const
+{
+    return pxsFmt(L"0x%08X.%08X.%08X.%08X", _u32[3], _u32[2], _u32[1], _u32[0]);
+}
+
+wxString u128::ToString128BigEndian() const
+{
+    return pxsFmt(L"0x%08X%08X%08X%08X", _u32[3], _u32[2], _u32[1], _u32[0]);
+}
+
+wxString u128::ToString64BigEndian() const
+{
+    return pxsFmt(L"0x%08X%08X.%08X%08X", _u32[3], _u32[2], _u32[1], _u32[0]);
+}
+
+wxString u128::ToString8BigEndian() const
+{
+    FastFormatUnicode result;
+    result.Write(L"0x%02X.%02X", _u8[16], _u8[15]);
+    for (uint i = 14; i >= 2; i -= 2)
+        result.Write(L".%02X.%02X", _u8[i], _u8[i - 1]);
+    result.Write(L".%02X",_u8[0]);
     return result;
 }
 

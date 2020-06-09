@@ -29,5 +29,6 @@ wxDECLARE_EVENT(debEVT_STEPINTO, wxCommandEvent);
 wxDECLARE_EVENT(debEVT_STEPOUT, wxCommandEvent);
 wxDECLARE_EVENT(debEVT_UPDATE, wxCommandEvent);
 wxDECLARE_EVENT(debEVT_BREAKPOINTWINDOW, wxCommandEvent);
+wxDECLARE_EVENT(debEVT_WATCHPOINTWINDOW, wxCommandEvent);
 
 bool executeExpressionWindow(wxWindow* parent, DebugInterface* cpu, u64& dest, const wxString& defaultValue = wxEmptyString);

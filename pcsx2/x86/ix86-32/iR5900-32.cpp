@@ -33,6 +33,8 @@
 #include "Elfheader.h"
 
 #include "../DebugTools/Breakpoints.h"
+#include "../DebugTools/Watchpoints.h"
+
 #include "Patch.h"
 
 #if !PCSX2_SEH
@@ -1224,6 +1226,16 @@ void recMemcheck(u32 op, u32 bits, bool store)
 	}
 }
 
+void checkWatchpoints(){
+	for(WatchPoint &wp : WatchPoint::watchPoints_){
+		if(wp.enabled && wp.cond.Evaluate()){
+			iFlushCall(FLUSH_EVERYTHING|FLUSH_PC);
+			GetCoreThread().PauseSelfDebug();
+			recExitExecution();
+		}
+	}
+}
+
 void encodeBreakpoint()
 {
 	if (isBreakpointNeeded(pc) != 0)
@@ -1273,6 +1285,7 @@ void recompileNextInstruction(int delayslot)
 	{
 		encodeBreakpoint();
 		encodeMemcheck();
+		xFastCall((void*)checkWatchpoints);
 	}
 
 	s_pCode = (int *)PSM( pc );

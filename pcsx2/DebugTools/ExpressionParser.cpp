@@ -74,7 +74,7 @@ const ExpressionOpcode ExpressionOpcodes[] = {
 	{ "",	0,	0,	0,	false }		// EXOP_NONE
 };
 
-bool parseNumber(char* str, int defaultrad, int len, u64& result)
+bool parseNumber(const char* str, int defaultrad, int len, u64& result)
 {
 	u64 val = 0;
 	int r = 0;
@@ -468,7 +468,7 @@ bool parsePostfixExpression(PostfixExpression& exp, IExpressionFunctions* funcs,
 					valueStack.push_back(val);
 				}
 				break;
-			case EXOP_SIGNPLUS:		// keine aktion nötig
+			case EXOP_SIGNPLUS:		// keine aktion nï¿½tig
 				break;
 			case EXOP_SIGNMINUS:	// -0
 				if (useFloat)

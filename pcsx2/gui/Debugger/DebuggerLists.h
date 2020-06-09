@@ -17,6 +17,7 @@
 #include <wx/listctrl.h>
 #include "DebugTools/DebugInterface.h"
 #include "DebugTools/Breakpoints.h"
+#include "DebugTools/Watchpoints.h"
 #include "DebugTools/BiosDebugData.h"
 #include "DebugTools/MipsStackWalk.h"
 #include "CtrlDisassemblyView.h"
@@ -91,6 +92,29 @@ private:
 
 	std::vector<BreakPoint> displayedBreakPoints_;
 	std::vector<MemCheck> displayedMemChecks_;
+	DebugInterface* cpu;
+	CtrlDisassemblyView* disasm;
+};
+
+class WatchpointList: public GenericListView
+{
+public:
+	WatchpointList(wxWindow* parent, DebugInterface* _cpu, CtrlDisassemblyView* _disassembly);
+protected:
+	void onPopupClick(wxCommandEvent& evt);
+	
+	virtual wxString getColumnText(int row, int col) const;
+	virtual int getRowCount();
+	virtual void onDoubleClick(int itemIndex, const wxPoint& point);
+	virtual void onRightClick(int itemIndex, const wxPoint& point);
+	virtual void onKeyDown(int key);
+private:
+	int getTotalWatchpointCount();
+	void editWatchpoint(int itemIndex);
+	void toggleEnabled(int itemIndex);
+	void removeWatchpoint(int itemIndex);
+	void showMenu(const wxPoint& pos);
+	void gotoRegister(int itemIndex);
 	DebugInterface* cpu;
 	CtrlDisassemblyView* disasm;
 };

@@ -28,6 +28,7 @@ wxDEFINE_EVENT(debEVT_STEPINTO, wxCommandEvent);
 wxDEFINE_EVENT(debEVT_STEPOUT, wxCommandEvent);
 wxDEFINE_EVENT(debEVT_UPDATE, wxCommandEvent);
 wxDEFINE_EVENT(debEVT_BREAKPOINTWINDOW, wxCommandEvent);
+wxDEFINE_EVENT(debEVT_WATCHPOINTWINDOW, wxCommandEvent);
 
 bool parseExpression(const char* exp, DebugInterface* cpu, u64& dest)
 {
