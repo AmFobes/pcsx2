@@ -41,8 +41,8 @@ public:
 	
 	u32 getInstructionSizeAt(u32 address)
 	{
-		u32 start = manager.getStartAddress(address);
-		u32 next  = manager.getNthNextAddress(start,1);
+		const u32 start = manager.getStartAddress(address);
+		const u32 next  = manager.getNthNextAddress(start,1);
 		return next-address;
 	}
 
@@ -69,33 +69,22 @@ private:
 	bool getDisasmAddressText(u32 address, wxString &dest, bool abbreviateLabels, bool showData);
 	u32 yToAddress(int y);
 	bool curAddressIsVisible();
-	
-	
 	void updateStatusBarText();
+
 	wxString disassembleRange(u32 start, u32 size);
 	wxString disassembleCurAddress();
-	
+
 	void editBreakpoint();
-	
 	std::set<std::string> getSelectedLineArguments();
 	void drawArguments(wxDC& dc, const DisassemblyLineInfo &line, int x, int y, const wxColor& textColor,
 		const std::set<std::string> &currentArguments);
-	
 
 	void postEvent(wxEventType type, wxString text);
 	void postEvent(wxEventType type, int value);
 
 	void onPopupClick(const wxCommandEvent& evt);
 
-	void setCurAddress(u32 newAddress, bool extend = false)
-	{
-		newAddress = manager.getStartAddress(newAddress);
-		u32 after = manager.getNthNextAddress(newAddress,1);
-		curAddress = newAddress;
-		selectRangeStart = extend ? std::min(selectRangeStart, newAddress) : newAddress;
-		selectRangeEnd = extend ? std::max(selectRangeEnd, after) : after;
-		updateStatusBarText();
-	}
+	void setCurAddress(u32 newAddress, bool extend = false);
 
 	void scrollAddressIntoView();
 	struct {

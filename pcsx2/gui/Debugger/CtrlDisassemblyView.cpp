@@ -181,6 +181,229 @@ CtrlDisassemblyView::CtrlDisassemblyView(wxWindow* parent, DebugInterface* _cpu)
 	setCurAddress(windowStart);
 }
 
+void CtrlDisassemblyView::mouseEvent(wxMouseEvent& evt)
+{
+	// left button
+	const wxEventType type = evt.GetEventType();
+	const bool hasFocus = wxWindow::FindFocus() == this;
+
+	if (type == wxEVT_LEFT_DOWN || type == wxEVT_LEFT_DCLICK || type == wxEVT_RIGHT_DOWN)
+	{
+		const u32 newAddress = yToAddress(evt.GetY());
+		bool extend = wxGetKeyState(WXK_SHIFT);
+
+		if (type == wxEVT_RIGHT_DOWN)
+		{
+			// Maintain the current selection if right clicking into it.
+			if (newAddress >= selectRangeStart && newAddress < selectRangeEnd)
+				extend = true;
+		}
+		else {
+			if (curAddress == newAddress && hasFocus)
+				toggleBreakpoint(false);
+		}
+
+		setCurAddress(newAddress, extend);
+		SetFocus();
+		SetFocusFromKbd();
+	}
+	else if (evt.GetEventType() == wxEVT_RIGHT_UP)
+	{
+		PopupMenu(&menu, evt.GetPosition());
+		return;
+	}
+	else if (evt.GetEventType() == wxEVT_MOUSEWHEEL)
+	{
+		if (evt.GetWheelRotation() > 0)
+		{
+			windowStart = manager.getNthPreviousAddress(windowStart, 3);
+			scanFunctions();
+		}
+		else if (evt.GetWheelRotation() < 0) {
+			windowStart = manager.getNthNextAddress(windowStart, 3);
+			scanFunctions();
+		}
+	}
+	else if (evt.GetEventType() == wxEVT_MOTION)
+	{
+		if (evt.ButtonIsDown(wxMOUSE_BTN_LEFT))
+		{
+			const int newAddress = yToAddress(evt.GetY());
+			setCurAddress(newAddress, wxGetKeyState(WXK_SHIFT));
+		}
+		else
+			return;
+	}
+	else {
+		evt.Skip();
+		return;
+	}
+
+	redraw();
+}
+
+void CtrlDisassemblyView::paintEvent(wxPaintEvent& evt)
+{
+	wxPaintDC dc(this);
+	render(dc);
+}
+
+void CtrlDisassemblyView::keydownEvent(wxKeyEvent& evt)
+{
+	const u32 windowEnd = manager.getNthNextAddress(windowStart, visibleRows);
+
+	if (evt.ControlDown())
+	{
+		switch (evt.GetKeyCode())
+		{
+		case 'd':
+		case 'D':
+			toggleBreakpoint(true);
+			break;
+		case 'e':
+		case 'E':
+			editBreakpoint();
+			break;
+		case 'b':
+		case 'B':
+		{
+			BreakpointWindow bpw(this, cpu);
+			if (bpw.ShowModal() == wxID_OK)
+			{
+				bpw.addBreakpoint();
+				postEvent(debEVT_UPDATE, 0);
+			}
+		}
+		break;
+		case 'g':
+		case 'G':
+		{
+			u64 addr = 0;
+			if (!executeExpressionWindow(this, cpu, addr))
+				return;
+			gotoAddress(addr);
+		}
+		break;
+		default:
+			evt.Skip();
+			break;
+		}
+	}
+	else {
+		if (evt.GetEventType() == wxEVT_CHAR && evt.GetKeyCode() >= 0x20 && evt.GetKeyCode() < 0x80)
+		{
+			std::string str;
+			str += static_cast<char>(evt.GetKeyCode());
+
+			assembleOpcode(curAddress, str);
+			return;
+		}
+
+		switch (evt.GetKeyCode())
+		{
+		case WXK_LEFT:
+			if (jumpStack.empty())
+			{
+				gotoAddress(cpu->getPC());
+			}
+			else {
+				const u32 addr = jumpStack[jumpStack.size() - 1];
+				jumpStack.pop_back();
+				gotoAddress(addr);
+			}
+			break;
+		case WXK_RIGHT:
+			followBranch();
+			break;
+		case WXK_UP:
+			setCurAddress(manager.getNthPreviousAddress(curAddress, 1), wxGetKeyState(WXK_SHIFT));
+			scrollAddressIntoView();
+			scanFunctions();
+			break;
+		case WXK_DOWN:
+			setCurAddress(manager.getNthNextAddress(curAddress, 1), wxGetKeyState(WXK_SHIFT));
+			scrollAddressIntoView();
+			scanFunctions();
+			break;
+		case WXK_TAB:
+			displaySymbols = !displaySymbols;
+			break;
+		case WXK_PAGEUP:
+			if (curAddress != windowStart && curAddressIsVisible()) {
+				setCurAddress(windowStart, wxGetKeyState(WXK_SHIFT));
+				scrollAddressIntoView();
+			}
+			else {
+				setCurAddress(manager.getNthPreviousAddress(windowStart, visibleRows), wxGetKeyState(WXK_SHIFT));
+				scrollAddressIntoView();
+			}
+			scanFunctions();
+			break;
+		case WXK_PAGEDOWN:
+			if (manager.getNthNextAddress(curAddress, 1) != windowEnd && curAddressIsVisible()) {
+				setCurAddress(manager.getNthPreviousAddress(windowEnd, 1), wxGetKeyState(WXK_SHIFT));
+				scrollAddressIntoView();
+			}
+			else {
+				setCurAddress(manager.getNthNextAddress(windowEnd, visibleRows - 1), wxGetKeyState(WXK_SHIFT));
+				scrollAddressIntoView();
+			}
+			scanFunctions();
+			break;
+		case WXK_F8:
+			postEvent(debEVT_STEPOUT, 0);
+			break;
+		case WXK_F10:
+			postEvent(debEVT_STEPOVER, 0);
+			return;
+		case WXK_F11:
+			if (evt.ShiftDown())
+				postEvent(debEVT_STEPOUT, 0);
+			else
+				postEvent(debEVT_STEPINTO, 0);
+			return;
+		default:
+			evt.Skip();
+			break;
+		}
+	}
+
+	redraw();
+}
+
+void CtrlDisassemblyView::scrollbarEvent(wxScrollWinEvent& evt)
+{
+	const int type = evt.GetEventType();
+	if (type == wxEVT_SCROLLWIN_LINEUP)
+	{
+		windowStart = manager.getNthPreviousAddress(windowStart, 1);
+		scanFunctions();
+	}
+	else if (type == wxEVT_SCROLLWIN_LINEDOWN)
+	{
+		windowStart = manager.getNthNextAddress(windowStart, 1);
+		scanFunctions();
+	}
+	else if (type == wxEVT_SCROLLWIN_PAGEUP)
+	{
+		windowStart = manager.getNthPreviousAddress(windowStart, visibleRows);
+		scanFunctions();
+	}
+	else if (type == wxEVT_SCROLLWIN_PAGEDOWN)
+	{
+		windowStart = manager.getNthNextAddress(windowStart, visibleRows);
+		scanFunctions();
+	}
+
+	redraw();
+}
+
+void CtrlDisassemblyView::sizeEvent(wxSizeEvent& evt)
+{
+	const wxSize s = evt.GetSize();
+	visibleRows = s.GetWidth() / rowHeight;
+}
+
 #ifdef _WIN32
 WXLRESULT CtrlDisassemblyView::MSWWindowProc(WXUINT nMsg, WXWPARAM wParam, WXLPARAM lParam)
 {
@@ -207,365 +430,28 @@ void CtrlDisassemblyView::scanFunctions()
 	manager.analyze(windowStart,manager.getNthNextAddress(windowStart,visibleRows)-windowStart);
 }
 
-void CtrlDisassemblyView::postEvent(wxEventType type, wxString text)
-{
-   wxCommandEvent event( type, GetId() );
-   event.SetEventObject(this);
-   event.SetClientData(cpu);
-   event.SetString(text);
-   wxPostEvent(this,event);
-}
-
-void CtrlDisassemblyView::postEvent(wxEventType type, int value)
-{
-   wxCommandEvent event( type, GetId() );
-   event.SetEventObject(this);
-   event.SetClientData(cpu);
-   event.SetInt(value);
-   wxPostEvent(this,event);
-}
-
-void CtrlDisassemblyView::paintEvent(wxPaintEvent & evt)
-{
-	wxPaintDC dc(this);
-	render(dc);
-}
-
 void CtrlDisassemblyView::redraw()
 {
 	wxClientDC dc(this);
 	render(dc);
 }
 
-bool CtrlDisassemblyView::getDisasmAddressText(u32 address, wxString &out, bool abbreviateLabels, bool showData)
+void CtrlDisassemblyView::getOpcodeText(u32 address, wxString& dest)
 {
-	if (displaySymbols)
-	{
-		const wxString addressSymbol = symbolMap.GetLabelString(address);
-		if (!addressSymbol.empty())
-		{
-			for (int k = 0; addressSymbol[k] != 0; k++)
-			{
-				// abbreviate long names
-				if (abbreviateLabels && k == 16 && addressSymbol[k+1] != 0)
-				{
-					out.append('+');
-					break;
-				}
-				out.append(addressSymbol[k]);
-			}
-			out.append(':');
-			return true;
-		} else {
-			out.append(wxString::Format("    % 08X", address));
-			return false;
-		}
-	} else {
-		if (showData)
-			out.append(wxString::Format("%08X %08X", address, cpu->read32(address)));
-		else
-			out.append(wxString::Format("%08X", address));
-		return false;
-	}
-}
-
-wxColor scaleColor(wxColor color, float factor)
-{
-	unsigned char r = color.Red();
-	unsigned char g = color.Green();
-	unsigned char b = color.Blue();
-	const unsigned char a = color.Alpha();
-
-	r = std::min(255,std::max((int)(r*factor),0));
-	g = std::min(255,std::max((int)(g*factor),0));
-	b = std::min(255,std::max((int)(b*factor),0));
-
-	return wxColor(r,g,b,a);
-}
-
-void CtrlDisassemblyView::drawBranchLine(wxDC& dc, std::map<u32,int>& addressPositions, const BranchLine& line)
-{
-	const u32 windowEnd = manager.getNthNextAddress(windowStart,visibleRows);
-	
-	const int winBottom = GetSize().GetHeight();
-
-	int topY = 0;
-	int bottomY = 0;
-	if (line.first < windowStart)
-	{
-		topY = -1;
-	} else if (line.first >= windowEnd)
-	{
-		topY = GetSize().GetHeight()+1;
-	} else {
-		topY = addressPositions[line.first] + rowHeight/2;
-	}
-			
-	if (line.second < windowStart)
-	{
-		bottomY = -1;
-	} else if (line.second >= windowEnd)
-	{
-		bottomY = GetSize().GetHeight()+1;
-	} else {
-		bottomY = addressPositions[line.second] + rowHeight/2;
-	}
-
-	if ((topY < 0 && bottomY < 0) || (topY > winBottom && bottomY > winBottom))
-	{
-		return;
-	}
-
-	// highlight line in a different color if it affects the currently selected opcode
-	wxColor color;
-	if (line.first == curAddress || line.second == curAddress)
-	{
-		color = wxColor(0xFF257AFA);
-	} else {
-		color = wxColor(0xFFFF3020);
-	}
-	
-	wxPen pen = wxPen(color);
-	dc.SetBrush(wxBrush(color));
-	dc.SetPen(wxPen(color));
-
-	const int x = pixelPositions.arrowsStart+line.laneIndex*8;
-
-	if (topY < 0)	// first is not visible, but second is
-	{
-		dc.DrawLine(x-2,bottomY,x+2,bottomY);
-		dc.DrawLine(x+2,bottomY,x+2,0);
-
-		if (line.type == LINE_DOWN)
-		{
-			dc.DrawLine(x,bottomY-4,x-4,bottomY);
-			dc.DrawLine(x-4,bottomY,x+1,bottomY+5);
-		}
-	} else if (bottomY > winBottom) // second is not visible, but first is
-	{
-		dc.DrawLine(x-2,topY,x+2,topY);
-		dc.DrawLine(x+2,topY,x+2,winBottom);
-				
-		if (line.type == LINE_UP)
-		{
-			dc.DrawLine(x,topY-4,x-4,topY);
-			dc.DrawLine(x-4,topY,x+1,topY+5);
-		}
-	} else { // both are visible
-		if (line.type == LINE_UP)
-		{
-			dc.DrawLine(x-2,bottomY,x+2,bottomY);
-			dc.DrawLine(x+2,bottomY,x+2,topY);
-			dc.DrawLine(x+2,topY,x-4,topY);
-			
-			dc.DrawLine(x,topY-4,x-4,topY);
-			dc.DrawLine(x-4,topY,x+1,topY+5);
-		} else {
-			dc.DrawLine(x-2,topY,x+2,topY);
-			dc.DrawLine(x+2,topY,x+2,bottomY);
-			dc.DrawLine(x+2,bottomY,x-4,bottomY);
-			
-			dc.DrawLine(x,bottomY-4,x-4,bottomY);
-			dc.DrawLine(x-4,bottomY,x+1,bottomY+5);
-		}
-	}
-}
-
-int getBackgroundColor(unsigned int address)
-{
-	const u32 colors[6] = {0xFFe0FFFF,0xFFFFe0e0,0xFFe8e8FF,0xFFFFe0FF,0xFFe0FFe0,0xFFFFFFe0};
-	const int n=symbolMap.GetFunctionNum(address);
-	if (n==-1) return 0xFFFFFFFF;
-	return colors[n%6];
-}
-
-std::set<std::string> CtrlDisassemblyView::getSelectedLineArguments() {
-	std::set<std::string> args;
-
 	DisassemblyLineInfo line = DisassemblyLineInfo();
-	for (u32 addr = selectRangeStart; addr < selectRangeEnd; addr += 4) {
-		manager.getLine(addr, displaySymbols, line);
-		size_t p = 0, nextp = line.params.find(',');
-		while (nextp != line.params.npos) {
-			args.insert(line.params.substr(p, nextp - p));
-			p = nextp + 1;
-			nextp = line.params.find(',', p);
-		}
-
-		if (p < line.params.size()) {
-			args.insert(line.params.substr(p));
-		}
-
-		// check for registers in memory opcodes
-		p = line.params.find('(');
-		nextp = line.params.find(')');
-		if (p != line.params.npos && nextp != line.params.npos && nextp > p) {
-			args.insert(line.params.substr(p+1, nextp - p - 1));
-		}
-
-	}
-
-	return args;
-}
-
-void CtrlDisassemblyView::drawArguments(wxDC& dc, const DisassemblyLineInfo &line, int x, int y, const wxColor& textColor,
-	const std::set<std::string> &currentArguments)
-{
-	if (line.params.empty())
-		return;
-
-	// Don't highlight the selected lines.
-	if (isInInterval(selectRangeStart, selectRangeEnd - selectRangeStart, line.info.opcodeAddress))
-	{
-		dc.DrawText(wxString(line.params.c_str(),wxConvUTF8),x,y);
-		return;
-	}
-
-	wxColor highlightedColor = wxColor(textColor == 0xFF0000FF ? 0xFFAABB77 : 0xFFAABB00);
-
-	size_t p = 0, nextp = line.params.find(',');
-	while (nextp != line.params.npos) {
-		const std::string arg = line.params.substr(p, nextp - p);
-		if (currentArguments.find(arg) != currentArguments.end() && textColor != 0xFFFFFFFF)
-		{
-			dc.SetTextForeground(highlightedColor);
-		}
-		dc.DrawText(wxString(arg.c_str(),wxConvUTF8),x,y);
-		x += arg.size()*charWidth;
-
-		p = nextp + 1;
-		nextp = line.params.find(',', p);
-
-		dc.SetTextForeground(textColor);
-		dc.DrawText(L",",x,y);
-		x += charWidth;
-	}
-	if (p < line.params.size()) {
-		const std::string arg = line.params.substr(p);
-		if (currentArguments.find(arg) != currentArguments.end() && textColor != 0xFFFFFFFF)
-		{
-			dc.SetTextForeground(highlightedColor);
-		}
-		dc.DrawText(wxString(arg.c_str(),wxConvUTF8),x,y);
-		dc.SetTextForeground(textColor);
-	}
-}
-
-void CtrlDisassemblyView::render(wxDC& dc)
-{
-	// init stuff
-	int totalWidth, totalHeight;
-	GetSize(&totalWidth,&totalHeight);
-	visibleRows = totalHeight / rowHeight;
-
-	// clear background
-	wxColor white = wxColor(0xFFFFFFFF);
-
-	dc.SetBrush(wxBrush(white));
-	dc.SetPen(wxPen(white));
-
-	int width,height;
-	dc.GetSize(&width,&height);
-	dc.DrawRectangle(0, 0, width, height);
-
-	if (!cpu->isAlive())
-		return;
-
-	wxFont font = pxGetFixedFont(8);
-	wxFont boldFont = pxGetFixedFont(8, wxFONTWEIGHT_BOLD);
-	font.SetPixelSize(wxSize(charWidth,rowHeight-2));
-	boldFont.SetPixelSize(wxSize(charWidth,rowHeight-2));
-
-	const bool hasFocus = wxWindow::FindFocus() == this;
-
-	std::map<u32,int> addressPositions;
-
-	unsigned int address = windowStart;
-
-	const std::set<std::string> currentArguments = getSelectedLineArguments();
-	DisassemblyLineInfo line = DisassemblyLineInfo();
-	for (int i = 0; i < visibleRows+1; i++)
-	{
-		manager.getLine(address,displaySymbols,line);
-
-		int rowY1 = rowHeight*i;
-
-		addressPositions[address] = rowY1;
-
-		wxColor backgroundColor = wxColor(getBackgroundColor(address));
-		wxColor textColor = wxColor(0xFF000000);
-		
-		if (isInInterval(address,line.totalSize,cpu->getPC()))
-		{
-			backgroundColor = scaleColor(backgroundColor,1.05f);
-		}
-
-		if (address >= selectRangeStart && address < selectRangeEnd)
-		{
-			if (hasFocus)
-			{
-				backgroundColor = address == curAddress ? 0xFFFF8822 : 0xFFFF9933;
-				textColor = 0xFFFFFFFF;
-			} else {
-				backgroundColor = 0xFFC0C0C0;
-			}
-		}
-
-		// display whether the condition of a branch is met
-		if (line.info.isConditional && address == cpu->getPC())
-		{
-			line.params += line.info.conditionMet ? "  ; true" : "  ; false";
-		}
-
-		// draw background
-		dc.SetBrush(wxBrush(backgroundColor));
-		dc.SetPen(wxPen(backgroundColor));
-		dc.DrawRectangle(0,rowY1,totalWidth,rowHeight);
-		
-		// display address/symbol
-		bool enabled;
-		if (CBreakPoints::IsAddressBreakPoint(address,&enabled))
-		{
-			if (enabled)
-				textColor = 0x0000FF;
-			const int yOffset = std::max(-1,(rowHeight-14+1)/2);
-			dc.DrawIcon(enabled ? bpEnabled : bpDisabled,2,rowY1+1+yOffset);
-		}
-		
-		dc.SetTextForeground(textColor);
-
-		wxString addressText;
-		getDisasmAddressText(address,addressText,true,line.type == DISTYPE_OPCODE);
-
-		dc.SetFont(font);
-		dc.DrawText(addressText,pixelPositions.addressStart,rowY1+2);
-		drawArguments(dc, line, pixelPositions.argumentsStart, rowY1 + 2, textColor, currentArguments);
-		
-		if (isInInterval(address,line.totalSize,cpu->getPC()))
-			dc.DrawText(L"\u25A0",pixelPositions.opcodeStart-(charWidth+1),rowY1);
-
-		dc.SetFont(boldFont);
-		dc.DrawText(wxString(line.name.c_str(),wxConvUTF8),pixelPositions.opcodeStart,rowY1+2);
-		
-		address += line.totalSize;
-	}
-
-	std::vector<BranchLine> branchLines = manager.getBranchLines(windowStart,address-windowStart);
-	for (size_t i = 0; i < branchLines.size(); i++)
-	{
-		drawBranchLine(dc,addressPositions,branchLines[i]);
-	}
-	
+	address = manager.getStartAddress(address);
+	manager.getLine(address, displaySymbols, line);
+	dest = wxString::Format("%s  %s", line.name.c_str(), line.params.c_str());
 }
 
 void CtrlDisassemblyView::gotoAddress(u32 addr)
 {
-	const u32 windowEnd = manager.getNthNextAddress(windowStart,visibleRows);
+	const u32 windowEnd = manager.getNthNextAddress(windowStart, visibleRows);
 	const u32 newAddress = manager.getStartAddress(addr);
 
 	if (newAddress < windowStart || newAddress >= windowEnd)
 	{
-		windowStart = manager.getNthPreviousAddress(newAddress,visibleRows/2);
+		windowStart = manager.getNthPreviousAddress(newAddress, visibleRows / 2);
 	}
 
 	setCurAddress(addr);
@@ -573,570 +459,26 @@ void CtrlDisassemblyView::gotoAddress(u32 addr)
 	redraw();
 }
 
-void CtrlDisassemblyView::scrollAddressIntoView()
-{
-	const u32 windowEnd = manager.getNthNextAddress(windowStart,visibleRows);
-
-	if (curAddress < windowStart)
-		windowStart = curAddress;
-	else if (curAddress >= windowEnd)
-		windowStart =  manager.getNthPreviousAddress(curAddress,visibleRows-1);
-	
-	scanFunctions();
-}
-
-void CtrlDisassemblyView::calculatePixelPositions()
-{
-	pixelPositions.addressStart = 16;
-	pixelPositions.opcodeStart = pixelPositions.addressStart + 18*charWidth;
-	pixelPositions.argumentsStart = pixelPositions.opcodeStart + 9*charWidth;
-	pixelPositions.arrowsStart = pixelPositions.argumentsStart + 30*charWidth;
-}
-
-
-void CtrlDisassemblyView::followBranch()
-{
-	DisassemblyLineInfo line = DisassemblyLineInfo();
-	manager.getLine(curAddress,true,line);
-
-	if (line.type == DISTYPE_OPCODE || line.type == DISTYPE_MACRO)
-	{
-		if (line.info.isBranch)
-		{
-			jumpStack.push_back(curAddress);
-			gotoAddress(line.info.branchTarget);
-		} else if (line.info.hasRelevantAddress)
-		{
-			// well, not  exactly a branch, but we can do something anyway	
-			postEvent(debEVT_GOTOINMEMORYVIEW,line.info.releventAddress);
-		}
-	} else if (line.type == DISTYPE_DATA)
-	{
-		// jump to the start of the current line
-		postEvent(debEVT_GOTOINMEMORYVIEW,curAddress);
-	}
-}
-
-void CtrlDisassemblyView::assembleOpcode(u32 address, wxString defaultText)
-{
-	u32 encoded = 0;
-
-	if (!cpu->isCpuPaused())
-	{
-		wxMessageBox( L"Cannot change code while the core is running",  L"Error.", wxICON_ERROR);
-		return;
-	}
-
-	TextEntryDialog entry(this,L"Assemble opcode",defaultText);
-	entry.Layout();
-
-	if (entry.ShowModal() != wxID_OK)
-		return;
-
-	wxString op = entry.getText();
-	// MipsAssembleOpcode requires a reference to an std::string
-	std::string errorText;
-	bool result = MipsAssembleOpcode(op.To8BitData(),cpu,address,encoded,errorText);
-	if (result)
-	{
-		SysClearExecutionCache();
-		cpu->write32(address,encoded);
-
-		if (address == curAddress)
-			gotoAddress(manager.getNthNextAddress(curAddress,1));
-
-		redraw();
-	} else {
-		wxMessageBox(wxString(errorText.c_str(), wxConvUTF8), L"Error.", wxICON_ERROR);
-	}
-}
-
-
-void CtrlDisassemblyView::onPopupClick(const wxCommandEvent& evt)
-{
-	switch (evt.GetId())
-	{
-	case ID_DISASM_COPYADDRESS:
-		if (wxTheClipboard->Open())
-		{
-			wxString text = wxString::Format(L"%08X",curAddress);
-			wxTheClipboard->SetData(new wxTextDataObject(text));
-			wxTheClipboard->Close();
-		}
-		break;
-	case ID_DISASM_COPYINSTRUCTIONHEX:
-		copyInstructions(selectRangeStart, selectRangeEnd, false);
-		break;
-	case ID_DISASM_COPYINSTRUCTIONDISASM:
-		copyInstructions(selectRangeStart, selectRangeEnd, true);
-		break;
-	case ID_DISASM_DISASSEMBLETOFILE:
-		disassembleToFile();
-		break;
-	case ID_DISASM_ASSEMBLE:
-		assembleOpcode(curAddress, disassembleCurAddress().ToStdString());
-		break;
-	case ID_DISASM_RUNTOHERE:
-		postEvent(debEVT_RUNTOPOS, curAddress);
-		break;
-	case ID_DISASM_SETPCTOHERE:
-		cpu->setPc(curAddress);
-		redraw();
-		break;
-	case ID_DISASM_TOGGLEBREAKPOINT:
-		toggleBreakpoint(false);
-		break;
-	case ID_DISASM_FOLLOWBRANCH:
-		followBranch();
-		break;
-	case ID_DISASM_GOTOINMEMORYVIEW:
-		postEvent(debEVT_GOTOINMEMORYVIEW,curAddress);
-		break;
-	case ID_DISASM_ADDFUNCTION:
-		addFunction();
-		break;
-	case ID_DISASM_RENAMEFUNCTION:
-		renameFunction();
-		break;
-	case ID_DISASM_REMOVEFUNCTION:
-		removefunction();
-		break;
-	default:
-		wxMessageBox( L"Unimplemented.",  L"Unimplemented.", wxICON_INFORMATION);
-		break;
-	}
-}
-
-void CtrlDisassemblyView::keydownEvent(wxKeyEvent& evt)
-{
-	const u32 windowEnd = manager.getNthNextAddress(windowStart,visibleRows);
-
-	if (evt.ControlDown())
-	{
-		switch (evt.GetKeyCode())
-		{
-		case 'd':
-		case 'D':
-			toggleBreakpoint(true);
-			break;
-		case 'e':
-		case 'E':
-			editBreakpoint();
-			break;
-		case 'b':
-		case 'B':
-			{
-				BreakpointWindow bpw(this,cpu);
-				if (bpw.ShowModal() == wxID_OK)
-				{
-					bpw.addBreakpoint();
-					postEvent(debEVT_UPDATE,0);
-				}
-			}
-			break;
-		case 'g':
-		case 'G':
-			{
-				u64 addr = 0;
-				if (!executeExpressionWindow(this,cpu,addr))
-					return;
-				gotoAddress(addr);
-			}
-			break;
-		default:
-			evt.Skip();
-			break;
-		}
-	} else {
-		if (evt.GetEventType() == wxEVT_CHAR && evt.GetKeyCode() >= 0x20 && evt.GetKeyCode() < 0x80)
-		{
-			std::string str;
-			str += static_cast<char>(evt.GetKeyCode());
-
-			assembleOpcode(curAddress,str);
-			return;
-		}
-
-		switch (evt.GetKeyCode())
-		{
-		case WXK_LEFT:
-			if (jumpStack.empty())
-			{
-				gotoAddress(cpu->getPC());
-			} else {
-				const u32 addr = jumpStack[jumpStack.size()-1];
-				jumpStack.pop_back();
-				gotoAddress(addr);
-			}
-			break;
-		case WXK_RIGHT:
-			followBranch();
-			break;
-		case WXK_UP:
-			setCurAddress(manager.getNthPreviousAddress(curAddress,1), wxGetKeyState(WXK_SHIFT));
-			scrollAddressIntoView();
-			scanFunctions();
-			break;
-		case WXK_DOWN:
-			setCurAddress(manager.getNthNextAddress(curAddress,1), wxGetKeyState(WXK_SHIFT));
-			scrollAddressIntoView();
-			scanFunctions();
-			break;
-		case WXK_TAB:
-			displaySymbols = !displaySymbols;
-			break;
-		case WXK_PAGEUP:
-			if (curAddress != windowStart && curAddressIsVisible()) {
-				setCurAddress(windowStart, wxGetKeyState(WXK_SHIFT));
-				scrollAddressIntoView();
-			} else {
-				setCurAddress(manager.getNthPreviousAddress(windowStart,visibleRows), wxGetKeyState(WXK_SHIFT));
-				scrollAddressIntoView();
-			}
-			scanFunctions();
-			break;
-		case WXK_PAGEDOWN:
-			if (manager.getNthNextAddress(curAddress,1) != windowEnd && curAddressIsVisible()) {
-				setCurAddress(manager.getNthPreviousAddress(windowEnd,1), wxGetKeyState(WXK_SHIFT));
-				scrollAddressIntoView();
-			} else {
-				setCurAddress(manager.getNthNextAddress(windowEnd,visibleRows-1), wxGetKeyState(WXK_SHIFT));
-				scrollAddressIntoView();
-			}
-			scanFunctions();
-			break;
-		case WXK_F8:
-			postEvent(debEVT_STEPOUT,0);
-			break;
-		case WXK_F10:
-			postEvent(debEVT_STEPOVER,0);
-			return;
-		case WXK_F11:
-			if (evt.ShiftDown())
-				postEvent(debEVT_STEPOUT,0);
-			else
-				postEvent(debEVT_STEPINTO,0);
-			return;
-		default:
-			evt.Skip();
-			break;
-		}
-	}
-
-	redraw();
-}
-
-void CtrlDisassemblyView::scrollbarEvent(wxScrollWinEvent& evt)
-{
-	int type = evt.GetEventType();
-	if (type == wxEVT_SCROLLWIN_LINEUP)
-	{
-		windowStart = manager.getNthPreviousAddress(windowStart,1);
-		scanFunctions();
-	} else if (type == wxEVT_SCROLLWIN_LINEDOWN)
-	{
-		windowStart = manager.getNthNextAddress(windowStart,1);
-		scanFunctions();
-	} else if (type == wxEVT_SCROLLWIN_PAGEUP)
-	{
-		windowStart = manager.getNthPreviousAddress(windowStart,visibleRows);
-		scanFunctions();
-	} else if (type == wxEVT_SCROLLWIN_PAGEDOWN)
-	{
-		windowStart = manager.getNthNextAddress(windowStart,visibleRows);
-		scanFunctions();
-	}
-
-	redraw();
-}
-
-void CtrlDisassemblyView::toggleBreakpoint(bool toggleEnabled)
-{
-	bool enabled;
-	if (CBreakPoints::IsAddressBreakPoint(curAddress,&enabled))
-	{
-		if (!enabled)
-		{
-			// enable disabled breakpoints
-			CBreakPoints::ChangeBreakPoint(curAddress,true);
-		} else if (!toggleEnabled && CBreakPoints::GetBreakPointCondition(curAddress) != NULL)
-		{
-			// don't just delete a breakpoint with a custom condition
-			CBreakPoints::RemoveBreakPoint(curAddress);
-		} else if (toggleEnabled)
-		{
-			// disable breakpoint
-			CBreakPoints::ChangeBreakPoint(curAddress,false);
-		} else {
-			// otherwise just remove breakpoint
-			CBreakPoints::RemoveBreakPoint(curAddress);
-		}
-	} else {
-		CBreakPoints::AddBreakPoint(curAddress);
-	}
-}
-
-
-void CtrlDisassemblyView::updateStatusBarText()
-{
-	wxString text;
-	DisassemblyLineInfo line = DisassemblyLineInfo();
-	manager.getLine(curAddress,true,line);
-	
-	if (line.type == DISTYPE_OPCODE || line.type == DISTYPE_MACRO)
-	{
-		if (line.info.isDataAccess)
-		{
-			if (!cpu->isValidAddress(line.info.dataAddress))
-			{
-				text = wxString::Format("Invalid address %08X", line.info.dataAddress);
-			} else if (line.info.lrType == MIPSAnalyst::LOADSTORE_NORMAL && line.info.dataAddress % line.info.dataSize)
-			{
-				text = wxString::Format("Unaligned address %08X", line.info.dataAddress);
-			} else {
-				switch (line.info.dataSize)
-				{
-				case 1:
-					text = wxString::Format("[%08X] = %02X", line.info.dataAddress, cpu->read8(line.info.dataAddress));
-					break;
-				case 2:
-					text = wxString::Format("[%08X] = %02X", line.info.dataAddress, cpu->read16(line.info.dataAddress));
-					break;
-				case 4:
-					{
-						u32 data = 0;
-						if (line.info.lrType != MIPSAnalyst::LOADSTORE_NORMAL)
-						{
-							const u32 address = line.info.dataAddress;
-							data = cpu->read32(address & ~3) >> (address & 3) * 8;
-							data |= cpu->read32((address + 3) & ~3) << (4 - (address & 3)) * 8;
-						} else {
-							data = cpu->read32(line.info.dataAddress);
-						}
-
-						const std::string addressSymbol = symbolMap.GetLabelString(data);
-						if (!addressSymbol.empty())
-						{
-							text = wxString::Format("[%08X] = %s (%08X)", line.info.dataAddress, addressSymbol.c_str(), data);
-						} else {
-							text = wxString::Format("[%08X] = %08X", line.info.dataAddress, data);
-						}
-						break;
-					}
-				case 8:
-					{
-						u64 data = 0;
-						if (line.info.lrType != MIPSAnalyst::LOADSTORE_NORMAL)
-						{
-							const u32 address = line.info.dataAddress;
-							data = cpu->read64(address & ~7) >> (address & 7) * 8;
-							data |= cpu->read64((address + 7) & ~7) << (8 - (address & 7)) * 8;
-						} else {
-							data = cpu->read64(line.info.dataAddress);
-						}
-						text = wxString::Format("[%08X] = %016" PRIX64, line.info.dataAddress, data);
-						break;
-					}
-				case 16:
-					{
-						__aligned16 const u128 data = cpu->read128(line.info.dataAddress);
-						text = wxString::Format("[%08X] = %016" PRIX64 "%016" PRIX64, line.info.dataAddress, data._u64[1], data._u64[0]);
-						break;
-					}
-				}
-			}
-		}
-
-		if (line.info.isBranch)
-		{
-			const std::string addressSymbol = symbolMap.GetLabelString(line.info.branchTarget);
-			if (addressSymbol.empty())
-			{
-				text = wxString::Format("%08X", line.info.branchTarget);
-			} else {
-				text = wxString::Format("%08X = %s", line.info.branchTarget, addressSymbol.c_str());
-			}
-		}
-	} else if (line.type == DISTYPE_DATA)
-	{
-		u32 start = symbolMap.GetDataStart(curAddress);
-		if (start == 0xFFFFFFFF)
-			start = curAddress;
-
-		const u32 diff = curAddress-start;
-		const std::string label = symbolMap.GetLabelString(start);
-
-		if (!label.empty())
-		{
-			if (diff != 0)
-				text = wxString::Format("%08X (%s) + %08X", start, label.c_str(), diff);
-			else
-				text = wxString::Format("%08X (%s)", start, label.c_str());
-		} else {
-			if (diff != 0)
-				text = wxString::Format("%08X + %08X", start, diff);
-			else
-				text = wxString::Format("%08X", start);
-		}
-	}
-
-	postEvent(debEVT_SETSTATUSBARTEXT,text);
-}
-
-void CtrlDisassemblyView::mouseEvent(wxMouseEvent& evt)
-{
-	// left button
-	const wxEventType type = evt.GetEventType();
-	const bool hasFocus = wxWindow::FindFocus() == this;
-
-	if (type == wxEVT_LEFT_DOWN || type == wxEVT_LEFT_DCLICK || type == wxEVT_RIGHT_DOWN )
-	{
-		const u32 newAddress = yToAddress(evt.GetY());
-		bool extend = wxGetKeyState(WXK_SHIFT);
-
-		if (type == wxEVT_RIGHT_DOWN)
-		{
-			// Maintain the current selection if right clicking into it.
-			if (newAddress >= selectRangeStart && newAddress < selectRangeEnd)
-				extend = true;
-		} else {
-			if (curAddress == newAddress && hasFocus)
-				toggleBreakpoint(false);
-		}
-
-		setCurAddress(newAddress,extend);
-		SetFocus();
-		SetFocusFromKbd();
-	} else if (evt.GetEventType() == wxEVT_RIGHT_UP)
-	{
-		PopupMenu(&menu,evt.GetPosition());
-		return;
-	} else if (evt.GetEventType() == wxEVT_MOUSEWHEEL)
-	{
-		if (evt.GetWheelRotation() > 0)
-		{
-			windowStart = manager.getNthPreviousAddress(windowStart,3);
-			scanFunctions();
-		} else if (evt.GetWheelRotation() < 0) {
-			windowStart = manager.getNthNextAddress(windowStart,3);
-			scanFunctions();
-		}
-	} else if (evt.GetEventType() == wxEVT_MOTION)
-	{
-		if (evt.ButtonIsDown(wxMOUSE_BTN_LEFT))
-		{
-			const int newAddress = yToAddress(evt.GetY());
-			setCurAddress(newAddress,wxGetKeyState(WXK_SHIFT));
-		} else
-			return;
-	} else {
-		evt.Skip();
-		return;
-	}
-
-	redraw();
-}
-
-void CtrlDisassemblyView::sizeEvent(wxSizeEvent& evt)
-{
-	const wxSize s = evt.GetSize();
-	visibleRows = s.GetWidth()/rowHeight;
-}
-
-u32 CtrlDisassemblyView::yToAddress(int y)
-{
-	const int line = y/rowHeight;
-	return manager.getNthNextAddress(windowStart,line);
-}
-
-bool CtrlDisassemblyView::curAddressIsVisible()
-{
-	const u32 windowEnd = manager.getNthNextAddress(windowStart,visibleRows);
-	return curAddress >= windowStart && curAddress < windowEnd;
-}
-
 void CtrlDisassemblyView::scrollStepping(u32 newPc)
 {
-	const u32 windowEnd = manager.getNthNextAddress(windowStart,visibleRows);
+	const u32 windowEnd = manager.getNthNextAddress(windowStart, visibleRows);
 
 	newPc = manager.getStartAddress(newPc);
-	if (newPc >= windowEnd || newPc >= manager.getNthPreviousAddress(windowEnd,1))
+	if (newPc >= windowEnd || newPc >= manager.getNthPreviousAddress(windowEnd, 1))
 	{
-		windowStart = manager.getNthPreviousAddress(newPc,visibleRows-2);
+		windowStart = manager.getNthPreviousAddress(newPc, visibleRows - 2);
 	}
 }
 
-wxString CtrlDisassemblyView::disassembleRange(u32 start, u32 size)
-{
-	wxString result;
-
-	// gather all branch targets without labels
-	std::set<u32> branchAddresses;
-	for (u32 i = 0; i < size; i += 4)
-	{
-		const MIPSAnalyst::MipsOpcodeInfo info = MIPSAnalyst::GetOpcodeInfo(cpu,start+i);
-
-		if (info.isBranch && symbolMap.GetLabelString(info.branchTarget).empty())
-		{
-			if (branchAddresses.find(info.branchTarget) == branchAddresses.end())
-			{
-				branchAddresses.insert(info.branchTarget);
-			}
-		}
-	}
-
-	u32 disAddress = start;
-	bool previousLabel = true;
-	DisassemblyLineInfo line = DisassemblyLineInfo();
-	while (disAddress < start+size)
-	{
-		wxString addressText;
-
-		manager.getLine(disAddress,displaySymbols,line);
-		const bool isLabel = getDisasmAddressText(disAddress,addressText,false,line.type == DISTYPE_OPCODE);
-
-		if (isLabel)
-		{
-			if (!previousLabel) result.append("\r\n");
-			result.append(wxString::Format("%s\r\n\r\n", addressText));
-		} else if (branchAddresses.find(disAddress) != branchAddresses.end())
-		{
-			if (!previousLabel) result.append("\r\n");
-			result.append(wxString::Format("pos_%08X:\r\n\r\n", disAddress));
-		}
-
-		if (line.info.isBranch && !line.info.isBranchToRegister
-			&& symbolMap.GetLabelString(line.info.branchTarget).empty()
-			&& branchAddresses.find(line.info.branchTarget) != branchAddresses.end())
-		{
-			wxString branchTarget = wxString::Format("pos_%08X", line.info.branchTarget);
-			result.append(branchTarget);
-			line.params = line.params.substr(0,line.params.find("0x")) + branchTarget;
-		}
-
-		result.append(wxString::Format("\t%s\t%s\r\n", line.name.c_str(), line.params.c_str()));
-		previousLabel = isLabel;
-		disAddress += line.totalSize;
-	}
-
-	return result;
-}
-
-wxString CtrlDisassemblyView::disassembleCurAddress()
-{
-	DisassemblyLineInfo line = DisassemblyLineInfo();
-	manager.getLine(curAddress, displaySymbols, line);
-	wxString disCurLine = wxString(line.name);
-	disCurLine.append((line.params.length() > 0 ? " " + line.params : ""));
-
-	return disCurLine;
-}
+/*
+	Context menu functions
+*/
 
 void CtrlDisassemblyView::copyInstructions(u32 startAddr, u32 endAddr, bool withDisasm)
 {
 	if (!wxTheClipboard->Open())
 	{
-		wxMessageBox( L"Could not open clipboard.",  L"Error", wxICON_ERROR);
+		wxMessageBox(L"Could not open clipboard.", L"Error", wxICON_ERROR);
 		return;
 	}
 
@@ -1155,12 +497,13 @@ void CtrlDisassemblyView::copyInstructions(u32 startAddr, u32 endAddr, bool with
 			if (pos + instructionSize < endAddr)
 				temp.append('\n');
 		}
-		
+
 		wxTheClipboard->SetData(new wxTextDataObject(temp));
-	} else
+	}
+	else
 	{
-		std::string disassembly = disassembleRange(startAddr,endAddr-startAddr);
-		wxTheClipboard->SetData(new wxTextDataObject(wxString(disassembly.c_str(),wxConvUTF8)));
+		std::string disassembly = disassembleRange(startAddr, endAddr - startAddr);
+		wxTheClipboard->SetData(new wxTextDataObject(wxString(disassembly.c_str(), wxConvUTF8)));
 	}
 
 	wxTheClipboard->Close();
@@ -1168,48 +511,108 @@ void CtrlDisassemblyView::copyInstructions(u32 startAddr, u32 endAddr, bool with
 
 void CtrlDisassemblyView::disassembleToFile()
 {
-	wxFileDialog dlg(this,wxEmptyString,wxEmptyString,wxEmptyString,L"*.*",wxFD_SAVE);
+	wxFileDialog dlg(this, wxEmptyString, wxEmptyString, wxEmptyString, L"*.*", wxFD_SAVE);
 
 	if (dlg.ShowModal() == wxID_CANCEL)
 		return;
-	
-	std::string disassembly = disassembleRange(selectRangeStart,selectRangeEnd-selectRangeStart);
-	wxFile output(dlg.GetPath(),wxFile::write);
-	output.Write(wxString(disassembly.c_str(),wxConvUTF8));
+
+	std::string disassembly = disassembleRange(selectRangeStart, selectRangeEnd - selectRangeStart);
+	wxFile output(dlg.GetPath(), wxFile::write);
+	output.Write(wxString(disassembly.c_str(), wxConvUTF8));
 }
 
-void CtrlDisassemblyView::editBreakpoint()
+void CtrlDisassemblyView::assembleOpcode(u32 address, wxString defaultText)
 {
-	BreakpointWindow win(this,cpu);
+	u32 encoded = 0;
 
-	bool exists = false;
-	if (CBreakPoints::IsAddressBreakPoint(curAddress))
+	if (!cpu->isCpuPaused())
 	{
-		auto breakpoints = CBreakPoints::GetBreakpoints();
-		for (size_t i = 0; i < breakpoints.size(); i++)
+		wxMessageBox(L"Cannot change code while the core is running", L"Error.", wxICON_ERROR);
+		return;
+	}
+
+	TextEntryDialog entry(this, L"Assemble opcode", defaultText);
+	entry.Layout();
+
+	if (entry.ShowModal() != wxID_OK)
+		return;
+
+	wxString op = entry.getText();
+	// MipsAssembleOpcode requires a reference to an std::string
+	std::string errorText;
+	bool result = MipsAssembleOpcode(op.To8BitData(), cpu, address, encoded, errorText);
+	if (result)
+	{
+		SysClearExecutionCache();
+		cpu->write32(address, encoded);
+
+		if (address == curAddress)
+			gotoAddress(manager.getNthNextAddress(curAddress, 1));
+
+		redraw();
+	}
+	else {
+		wxMessageBox(wxString(errorText.c_str(), wxConvUTF8), L"Error.", wxICON_ERROR);
+	}
+}
+
+void CtrlDisassemblyView::toggleBreakpoint(bool toggleEnabled)
+{
+	bool enabled;
+	if (CBreakPoints::IsAddressBreakPoint(curAddress, &enabled))
+	{
+		if (!enabled)
 		{
-			if (breakpoints.at(i).addr == curAddress)
-			{
-				win.loadFromBreakpoint(breakpoints.at(i));
-				exists = true;
-				break;
-			}
+			// enable disabled breakpoints
+			CBreakPoints::ChangeBreakPoint(curAddress, true);
+		}
+		else if (!toggleEnabled && CBreakPoints::GetBreakPointCondition(curAddress) != NULL)
+		{
+			// don't just delete a breakpoint with a custom condition
+			CBreakPoints::RemoveBreakPoint(curAddress);
+		}
+		else if (toggleEnabled)
+		{
+			// disable breakpoint
+			CBreakPoints::ChangeBreakPoint(curAddress, false);
+		}
+		else {
+			// otherwise just remove breakpoint
+			CBreakPoints::RemoveBreakPoint(curAddress);
 		}
 	}
-
-	if (!exists)
-		win.initBreakpoint(curAddress);
-
-	if (win.ShowModal() == wxID_OK)
-	{
-		if (exists)
-			CBreakPoints::RemoveBreakPoint(curAddress);
-		win.addBreakpoint();	
-		postEvent(debEVT_UPDATE,0);
+	else {
+		CBreakPoints::AddBreakPoint(curAddress);
 	}
 }
 
-void CtrlDisassemblyView::addFunction() {
+void CtrlDisassemblyView::followBranch()
+{
+	DisassemblyLineInfo line = DisassemblyLineInfo();
+	manager.getLine(curAddress, true, line);
+
+	if (line.type == DISTYPE_OPCODE || line.type == DISTYPE_MACRO)
+	{
+		if (line.info.isBranch)
+		{
+			jumpStack.push_back(curAddress);
+			gotoAddress(line.info.branchTarget);
+		}
+		else if (line.info.hasRelevantAddress)
+		{
+			// well, not  exactly a branch, but we can do something anyway	
+			postEvent(debEVT_GOTOINMEMORYVIEW, line.info.releventAddress);
+		}
+	}
+	else if (line.type == DISTYPE_DATA)
+	{
+		// jump to the start of the current line
+		postEvent(debEVT_GOTOINMEMORYVIEW, curAddress);
+	}
+}
+
+void CtrlDisassemblyView::addFunction() 
+{
 	const u32 prevBegin = symbolMap.GetFunctionStart(curAddress);
 	if (prevBegin != 0xFFFFFFFF)
 	{
@@ -1250,7 +653,8 @@ void CtrlDisassemblyView::addFunction() {
 	redraw();
 }
 
-void CtrlDisassemblyView::renameFunction() {
+void CtrlDisassemblyView::renameFunction()
+{
 	const u32 funcBegin = symbolMap.GetFunctionStart(curAddress);
 	if (funcBegin != 0xFFFFFFFF)
 	{
@@ -1271,7 +675,8 @@ void CtrlDisassemblyView::renameFunction() {
 	}
 }
 
-void CtrlDisassemblyView::removefunction() {
+void CtrlDisassemblyView::removefunction() 
+{
 	const u32 funcBegin = symbolMap.GetFunctionStart(curAddress);
 	if (funcBegin != 0xFFFFFFFF)
 	{
@@ -1296,10 +701,663 @@ void CtrlDisassemblyView::removefunction() {
 
 	redraw();
 }
-void CtrlDisassemblyView::getOpcodeText(u32 address, wxString &dest)
+
+void CtrlDisassemblyView::drawBranchLine(wxDC& dc, std::map<u32, int>& addressPositions, const BranchLine& line)
+{
+	const u32 windowEnd = manager.getNthNextAddress(windowStart, visibleRows);
+
+	const int winBottom = GetSize().GetHeight();
+
+	int topY = 0;
+	int bottomY = 0;
+	if (line.first < windowStart)
+	{
+		topY = -1;
+	}
+	else if (line.first >= windowEnd)
+	{
+		topY = GetSize().GetHeight() + 1;
+	}
+	else {
+		topY = addressPositions[line.first] + rowHeight / 2;
+	}
+
+	if (line.second < windowStart)
+	{
+		bottomY = -1;
+	}
+	else if (line.second >= windowEnd)
+	{
+		bottomY = GetSize().GetHeight() + 1;
+	}
+	else {
+		bottomY = addressPositions[line.second] + rowHeight / 2;
+	}
+
+	if ((topY < 0 && bottomY < 0) || (topY > winBottom && bottomY > winBottom))
+	{
+		return;
+	}
+
+	// highlight line in a different color if it affects the currently selected opcode
+	wxColor color;
+	if (line.first == curAddress || line.second == curAddress)
+	{
+		color = wxColor(0xFF257AFA);
+	}
+	else {
+		color = wxColor(0xFFFF3020);
+	}
+
+	wxPen pen = wxPen(color);
+	dc.SetBrush(wxBrush(color));
+	dc.SetPen(wxPen(color));
+
+	const int x = pixelPositions.arrowsStart + line.laneIndex * 8;
+
+	if (topY < 0)	// first is not visible, but second is
+	{
+		dc.DrawLine(x - 2, bottomY, x + 2, bottomY);
+		dc.DrawLine(x + 2, bottomY, x + 2, 0);
+
+		if (line.type == LINE_DOWN)
+		{
+			dc.DrawLine(x, bottomY - 4, x - 4, bottomY);
+			dc.DrawLine(x - 4, bottomY, x + 1, bottomY + 5);
+		}
+	}
+	else if (bottomY > winBottom) // second is not visible, but first is
+	{
+		dc.DrawLine(x - 2, topY, x + 2, topY);
+		dc.DrawLine(x + 2, topY, x + 2, winBottom);
+
+		if (line.type == LINE_UP)
+		{
+			dc.DrawLine(x, topY - 4, x - 4, topY);
+			dc.DrawLine(x - 4, topY, x + 1, topY + 5);
+		}
+	}
+	else { // both are visible
+		if (line.type == LINE_UP)
+		{
+			dc.DrawLine(x - 2, bottomY, x + 2, bottomY);
+			dc.DrawLine(x + 2, bottomY, x + 2, topY);
+			dc.DrawLine(x + 2, topY, x - 4, topY);
+
+			dc.DrawLine(x, topY - 4, x - 4, topY);
+			dc.DrawLine(x - 4, topY, x + 1, topY + 5);
+		}
+		else {
+			dc.DrawLine(x - 2, topY, x + 2, topY);
+			dc.DrawLine(x + 2, topY, x + 2, bottomY);
+			dc.DrawLine(x + 2, bottomY, x - 4, bottomY);
+
+			dc.DrawLine(x, bottomY - 4, x - 4, bottomY);
+			dc.DrawLine(x - 4, bottomY, x + 1, bottomY + 5);
+		}
+	}
+}
+
+inline int getBackgroundColor(unsigned int address)
+{
+	const u32 colors[6] = { 0xFFe0FFFF,0xFFFFe0e0,0xFFe8e8FF,0xFFFFe0FF,0xFFe0FFe0,0xFFFFFFe0 };
+	const int n = symbolMap.GetFunctionNum(address);
+	if (n == -1) return 0xFFFFFFFF;
+	return colors[n % 6];
+}
+
+inline wxColor scaleColor(wxColor color, float factor)
+{
+	unsigned char r = color.Red();
+	unsigned char g = color.Green();
+	unsigned char b = color.Blue();
+	const unsigned char a = color.Alpha();
+
+	r = std::min(255, std::max((int)(r * factor), 0));
+	g = std::min(255, std::max((int)(g * factor), 0));
+	b = std::min(255, std::max((int)(b * factor), 0));
+
+	return wxColor(r, g, b, a);
+}
+
+void CtrlDisassemblyView::render(wxDC& dc)
+{
+	// init stuff
+	int totalWidth, totalHeight;
+	GetSize(&totalWidth, &totalHeight);
+	visibleRows = totalHeight / rowHeight;
+
+	// clear background
+	wxColor white = wxColor(0xFFFFFFFF);
+
+	dc.SetBrush(wxBrush(white));
+	dc.SetPen(wxPen(white));
+
+	int width, height;
+	dc.GetSize(&width, &height);
+	dc.DrawRectangle(0, 0, width, height);
+
+	if (!cpu->isAlive())
+		return;
+
+	wxFont font = pxGetFixedFont(8);
+	wxFont boldFont = pxGetFixedFont(8, wxFONTWEIGHT_BOLD);
+	font.SetPixelSize(wxSize(charWidth, rowHeight - 2));
+	boldFont.SetPixelSize(wxSize(charWidth, rowHeight - 2));
+
+	const bool hasFocus = wxWindow::FindFocus() == this;
+
+	std::map<u32, int> addressPositions;
+
+	unsigned int address = windowStart;
+
+	const std::set<std::string> currentArguments = getSelectedLineArguments();
+	DisassemblyLineInfo line = DisassemblyLineInfo();
+	for (int i = 0; i < visibleRows + 1; i++)
+	{
+		manager.getLine(address, displaySymbols, line);
+
+		int rowY1 = rowHeight * i;
+
+		addressPositions[address] = rowY1;
+
+		wxColor backgroundColor = wxColor(getBackgroundColor(address));
+		wxColor textColor = wxColor(0xFF000000);
+
+		if (isInInterval(address, line.totalSize, cpu->getPC()))
+		{
+			backgroundColor = scaleColor(backgroundColor, 1.05f);
+		}
+
+		if (address >= selectRangeStart && address < selectRangeEnd)
+		{
+			if (hasFocus)
+			{
+				backgroundColor = address == curAddress ? 0xFFFF8822 : 0xFFFF9933;
+				textColor = 0xFFFFFFFF;
+			}
+			else {
+				backgroundColor = 0xFFC0C0C0;
+			}
+		}
+
+		// display whether the condition of a branch is met
+		if (line.info.isConditional && address == cpu->getPC())
+		{
+			line.params += line.info.conditionMet ? "  ; true" : "  ; false";
+		}
+
+		// draw background
+		dc.SetBrush(wxBrush(backgroundColor));
+		dc.SetPen(wxPen(backgroundColor));
+		dc.DrawRectangle(0, rowY1, totalWidth, rowHeight);
+
+		// display address/symbol
+		bool enabled;
+		if (CBreakPoints::IsAddressBreakPoint(address, &enabled))
+		{
+			if (enabled)
+				textColor = 0x0000FF;
+			const int yOffset = std::max(-1, (rowHeight - 14 + 1) / 2);
+			dc.DrawIcon(enabled ? bpEnabled : bpDisabled, 2, rowY1 + 1 + yOffset);
+		}
+
+		dc.SetTextForeground(textColor);
+
+		wxString addressText;
+		getDisasmAddressText(address, addressText, true, line.type == DISTYPE_OPCODE);
+
+		dc.SetFont(font);
+		dc.DrawText(addressText, pixelPositions.addressStart, rowY1 + 2);
+		drawArguments(dc, line, pixelPositions.argumentsStart, rowY1 + 2, textColor, currentArguments);
+
+		if (isInInterval(address, line.totalSize, cpu->getPC()))
+			dc.DrawText(L"\u25A0", pixelPositions.opcodeStart - (charWidth + 1), rowY1);
+
+		dc.SetFont(boldFont);
+		dc.DrawText(wxString(line.name.c_str(), wxConvUTF8), pixelPositions.opcodeStart, rowY1 + 2);
+
+		address += line.totalSize;
+	}
+
+	std::vector<BranchLine> branchLines = manager.getBranchLines(windowStart, address - windowStart);
+	for (size_t i = 0; i < branchLines.size(); i++)
+	{
+		drawBranchLine(dc, addressPositions, branchLines[i]);
+	}
+
+}
+
+void CtrlDisassemblyView::calculatePixelPositions()
+{
+	pixelPositions.addressStart = 16;
+	pixelPositions.opcodeStart = pixelPositions.addressStart + 18 * charWidth;
+	pixelPositions.argumentsStart = pixelPositions.opcodeStart + 9 * charWidth;
+	pixelPositions.arrowsStart = pixelPositions.argumentsStart + 30 * charWidth;
+}
+
+bool CtrlDisassemblyView::getDisasmAddressText(u32 address, wxString& out, bool abbreviateLabels, bool showData)
+{
+	if (displaySymbols)
+	{
+		const wxString addressSymbol = symbolMap.GetLabelString(address);
+		if (!addressSymbol.empty())
+		{
+			for (int k = 0; addressSymbol[k] != 0; k++)
+			{
+				// abbreviate long names
+				if (abbreviateLabels && k == 16 && addressSymbol[k + 1] != 0)
+				{
+					out.append('+');
+					break;
+				}
+				out.append(addressSymbol[k]);
+			}
+			out.append(':');
+			return true;
+		}
+		else {
+			out.append(wxString::Format("    % 08X", address));
+			return false;
+		}
+	}
+	else {
+		if (showData)
+			out.append(wxString::Format("%08X %08X", address, cpu->read32(address)));
+		else
+			out.append(wxString::Format("%08X", address));
+		return false;
+	}
+}
+
+u32 CtrlDisassemblyView::yToAddress(int y)
+{
+	const int line = y / rowHeight;
+	return manager.getNthNextAddress(windowStart, line);
+}
+
+bool CtrlDisassemblyView::curAddressIsVisible()
+{
+	const u32 windowEnd = manager.getNthNextAddress(windowStart, visibleRows);
+	return curAddress >= windowStart && curAddress < windowEnd;
+}
+
+void CtrlDisassemblyView::updateStatusBarText()
+{
+	wxString text;
+	DisassemblyLineInfo line = DisassemblyLineInfo();
+	manager.getLine(curAddress, true, line);
+
+	if (line.type == DISTYPE_OPCODE || line.type == DISTYPE_MACRO)
+	{
+		if (line.info.isDataAccess)
+		{
+			if (!cpu->isValidAddress(line.info.dataAddress))
+			{
+				text = wxString::Format("Invalid address %08X", line.info.dataAddress);
+			}
+			else if (line.info.lrType == MIPSAnalyst::LOADSTORE_NORMAL && line.info.dataAddress % line.info.dataSize)
+			{
+				text = wxString::Format("Unaligned address %08X", line.info.dataAddress);
+			}
+			else {
+				switch (line.info.dataSize)
+				{
+				case 1:
+					text = wxString::Format("[%08X] = %02X", line.info.dataAddress, cpu->read8(line.info.dataAddress));
+					break;
+				case 2:
+					text = wxString::Format("[%08X] = %02X", line.info.dataAddress, cpu->read16(line.info.dataAddress));
+					break;
+				case 4:
+				{
+					u32 data = 0;
+					if (line.info.lrType != MIPSAnalyst::LOADSTORE_NORMAL)
+					{
+						const u32 address = line.info.dataAddress;
+						data = cpu->read32(address & ~3) >> (address & 3) * 8;
+						data |= cpu->read32((address + 3) & ~3) << (4 - (address & 3)) * 8;
+					}
+					else {
+						data = cpu->read32(line.info.dataAddress);
+					}
+
+					const std::string addressSymbol = symbolMap.GetLabelString(data);
+					if (!addressSymbol.empty())
+					{
+						text = wxString::Format("[%08X] = %s (%08X)", line.info.dataAddress, addressSymbol.c_str(), data);
+					}
+					else {
+						text = wxString::Format("[%08X] = %08X", line.info.dataAddress, data);
+					}
+					break;
+				}
+				case 8:
+				{
+					u64 data = 0;
+					if (line.info.lrType != MIPSAnalyst::LOADSTORE_NORMAL)
+					{
+						const u32 address = line.info.dataAddress;
+						data = cpu->read64(address & ~7) >> (address & 7) * 8;
+						data |= cpu->read64((address + 7) & ~7) << (8 - (address & 7)) * 8;
+					}
+					else {
+						data = cpu->read64(line.info.dataAddress);
+					}
+					text = wxString::Format("[%08X] = %016" PRIX64, line.info.dataAddress, data);
+					break;
+				}
+				case 16:
+				{
+					__aligned16 const u128 data = cpu->read128(line.info.dataAddress);
+					text = wxString::Format("[%08X] = %016" PRIX64 "%016" PRIX64, line.info.dataAddress, data._u64[1], data._u64[0]);
+					break;
+				}
+				}
+			}
+		}
+
+		if (line.info.isBranch)
+		{
+			const std::string addressSymbol = symbolMap.GetLabelString(line.info.branchTarget);
+			if (addressSymbol.empty())
+			{
+				text = wxString::Format("%08X", line.info.branchTarget);
+			}
+			else {
+				text = wxString::Format("%08X = %s", line.info.branchTarget, addressSymbol.c_str());
+			}
+		}
+	}
+	else if (line.type == DISTYPE_DATA)
+	{
+		u32 start = symbolMap.GetDataStart(curAddress);
+		if (start == 0xFFFFFFFF)
+			start = curAddress;
+
+		const u32 diff = curAddress - start;
+		const std::string label = symbolMap.GetLabelString(start);
+
+		if (!label.empty())
+		{
+			if (diff != 0)
+				text = wxString::Format("%08X (%s) + %08X", start, label.c_str(), diff);
+			else
+				text = wxString::Format("%08X (%s)", start, label.c_str());
+		}
+		else {
+			if (diff != 0)
+				text = wxString::Format("%08X + %08X", start, diff);
+			else
+				text = wxString::Format("%08X", start);
+		}
+	}
+
+	postEvent(debEVT_SETSTATUSBARTEXT, text);
+}
+
+wxString CtrlDisassemblyView::disassembleRange(u32 start, u32 size)
+{
+	wxString result;
+
+	// gather all branch targets without labels
+	std::set<u32> branchAddresses;
+	for (u32 i = 0; i < size; i += 4)
+	{
+		const MIPSAnalyst::MipsOpcodeInfo info = MIPSAnalyst::GetOpcodeInfo(cpu, start + i);
+
+		if (info.isBranch && symbolMap.GetLabelString(info.branchTarget).empty())
+		{
+			if (branchAddresses.find(info.branchTarget) == branchAddresses.end())
+			{
+				branchAddresses.insert(info.branchTarget);
+			}
+		}
+	}
+
+	u32 disAddress = start;
+	bool previousLabel = true;
+	DisassemblyLineInfo line = DisassemblyLineInfo();
+	while (disAddress < start + size)
+	{
+		wxString addressText;
+
+		manager.getLine(disAddress, displaySymbols, line);
+		const bool isLabel = getDisasmAddressText(disAddress, addressText, false, line.type == DISTYPE_OPCODE);
+
+		if (isLabel)
+		{
+			if (!previousLabel) result.append("\r\n");
+			result.append(wxString::Format("%s\r\n\r\n", addressText));
+		}
+		else if (branchAddresses.find(disAddress) != branchAddresses.end())
+		{
+			if (!previousLabel) result.append("\r\n");
+			result.append(wxString::Format("pos_%08X:\r\n\r\n", disAddress));
+		}
+
+		if (line.info.isBranch && !line.info.isBranchToRegister
+			&& symbolMap.GetLabelString(line.info.branchTarget).empty()
+			&& branchAddresses.find(line.info.branchTarget) != branchAddresses.end())
+		{
+			wxString branchTarget = wxString::Format("pos_%08X", line.info.branchTarget);
+			result.append(branchTarget);
+			line.params = line.params.substr(0, line.params.find("0x")) + branchTarget;
+		}
+
+		result.append(wxString::Format("\t%s\t%s\r\n", line.name.c_str(), line.params.c_str()));
+		previousLabel = isLabel;
+		disAddress += line.totalSize;
+	}
+
+	return result;
+}
+
+wxString CtrlDisassemblyView::disassembleCurAddress()
 {
 	DisassemblyLineInfo line = DisassemblyLineInfo();
-	address = manager.getStartAddress(address);
-	manager.getLine(address,displaySymbols,line);
-	dest = wxString::Format("%s  %s", line.name.c_str(), line.params.c_str());
+	manager.getLine(curAddress, displaySymbols, line);
+	wxString disCurLine = wxString(line.name);
+	disCurLine.append((line.params.length() > 0 ? " " + line.params : ""));
+
+	return disCurLine;
+}
+
+void CtrlDisassemblyView::editBreakpoint()
+{
+	BreakpointWindow win(this, cpu);
+
+	bool exists = false;
+	if (CBreakPoints::IsAddressBreakPoint(curAddress))
+	{
+		auto breakpoints = CBreakPoints::GetBreakpoints();
+		for (size_t i = 0; i < breakpoints.size(); i++)
+		{
+			if (breakpoints.at(i).addr == curAddress)
+			{
+				win.loadFromBreakpoint(breakpoints.at(i));
+				exists = true;
+				break;
+			}
+		}
+	}
+
+	if (!exists)
+		win.initBreakpoint(curAddress);
+
+	if (win.ShowModal() == wxID_OK)
+	{
+		if (exists)
+			CBreakPoints::RemoveBreakPoint(curAddress);
+		win.addBreakpoint();
+		postEvent(debEVT_UPDATE, 0);
+	}
+}
+
+std::set<std::string> CtrlDisassemblyView::getSelectedLineArguments() 
+{
+	std::set<std::string> args;
+
+	DisassemblyLineInfo line = DisassemblyLineInfo();
+	for (u32 addr = selectRangeStart; addr < selectRangeEnd; addr += 4) {
+		manager.getLine(addr, displaySymbols, line);
+		size_t p = 0, nextp = line.params.find(',');
+		while (nextp != line.params.npos) {
+			args.insert(line.params.substr(p, nextp - p));
+			p = nextp + 1;
+			nextp = line.params.find(',', p);
+		}
+
+		if (p < line.params.size()) {
+			args.insert(line.params.substr(p));
+		}
+
+		// check for registers in memory opcodes
+		p = line.params.find('(');
+		nextp = line.params.find(')');
+		if (p != line.params.npos && nextp != line.params.npos && nextp > p) {
+			args.insert(line.params.substr(p + 1, nextp - p - 1));
+		}
+
+	}
+
+	return args;
+}
+
+void CtrlDisassemblyView::drawArguments(wxDC& dc, const DisassemblyLineInfo& line, int x, int y, const wxColor& textColor,
+	const std::set<std::string>& currentArguments)
+{
+	if (line.params.empty())
+		return;
+
+	// Don't highlight the selected lines.
+	if (isInInterval(selectRangeStart, selectRangeEnd - selectRangeStart, line.info.opcodeAddress))
+	{
+		dc.DrawText(wxString(line.params.c_str(), wxConvUTF8), x, y);
+		return;
+	}
+
+	wxColor highlightedColor = wxColor(textColor == 0xFF0000FF ? 0xFFAABB77 : 0xFFAABB00);
+
+	size_t p = 0, nextp = line.params.find(',');
+	while (nextp != line.params.npos) {
+		const std::string arg = line.params.substr(p, nextp - p);
+		if (currentArguments.find(arg) != currentArguments.end() && textColor != 0xFFFFFFFF)
+		{
+			dc.SetTextForeground(highlightedColor);
+		}
+		dc.DrawText(wxString(arg.c_str(), wxConvUTF8), x, y);
+		x += arg.size() * charWidth;
+
+		p = nextp + 1;
+		nextp = line.params.find(',', p);
+
+		dc.SetTextForeground(textColor);
+		dc.DrawText(L",", x, y);
+		x += charWidth;
+	}
+	if (p < line.params.size()) {
+		const std::string arg = line.params.substr(p);
+		if (currentArguments.find(arg) != currentArguments.end() && textColor != 0xFFFFFFFF)
+		{
+			dc.SetTextForeground(highlightedColor);
+		}
+		dc.DrawText(wxString(arg.c_str(), wxConvUTF8), x, y);
+		dc.SetTextForeground(textColor);
+	}
+}
+
+void CtrlDisassemblyView::postEvent(wxEventType type, wxString text)
+{
+   wxCommandEvent event( type, GetId() );
+   event.SetEventObject(this);
+   event.SetClientData(cpu);
+   event.SetString(text);
+   wxPostEvent(this,event);
+}
+
+void CtrlDisassemblyView::postEvent(wxEventType type, int value)
+{
+   wxCommandEvent event( type, GetId() );
+   event.SetEventObject(this);
+   event.SetClientData(cpu);
+   event.SetInt(value);
+   wxPostEvent(this,event);
+}
+
+void CtrlDisassemblyView::onPopupClick(const wxCommandEvent& evt)
+{
+	switch (evt.GetId())
+	{
+	case ID_DISASM_COPYADDRESS:
+		if (wxTheClipboard->Open())
+		{
+			wxString text = wxString::Format(L"%08X", curAddress);
+			wxTheClipboard->SetData(new wxTextDataObject(text));
+			wxTheClipboard->Close();
+		}
+		break;
+	case ID_DISASM_COPYINSTRUCTIONHEX:
+		copyInstructions(selectRangeStart, selectRangeEnd, false);
+		break;
+	case ID_DISASM_COPYINSTRUCTIONDISASM:
+		copyInstructions(selectRangeStart, selectRangeEnd, true);
+		break;
+	case ID_DISASM_DISASSEMBLETOFILE:
+		disassembleToFile();
+		break;
+	case ID_DISASM_ASSEMBLE:
+		assembleOpcode(curAddress, disassembleCurAddress().ToStdString());
+		break;
+	case ID_DISASM_RUNTOHERE:
+		postEvent(debEVT_RUNTOPOS, curAddress);
+		break;
+	case ID_DISASM_SETPCTOHERE:
+		cpu->setPc(curAddress);
+		redraw();
+		break;
+	case ID_DISASM_TOGGLEBREAKPOINT:
+		toggleBreakpoint(false);
+		break;
+	case ID_DISASM_FOLLOWBRANCH:
+		followBranch();
+		break;
+	case ID_DISASM_GOTOINMEMORYVIEW:
+		postEvent(debEVT_GOTOINMEMORYVIEW, curAddress);
+		break;
+	case ID_DISASM_ADDFUNCTION:
+		addFunction();
+		break;
+	case ID_DISASM_RENAMEFUNCTION:
+		renameFunction();
+		break;
+	case ID_DISASM_REMOVEFUNCTION:
+		removefunction();
+		break;
+	default:
+		wxMessageBox(L"Unimplemented.", L"Unimplemented.", wxICON_INFORMATION);
+		break;
+	}
+}
+
+void CtrlDisassemblyView::setCurAddress(u32 newAddress, bool extend) 
+{
+	newAddress = manager.getStartAddress(newAddress);
+	const u32 after = manager.getNthNextAddress(newAddress, 1);
+	curAddress = newAddress;
+	selectRangeStart = extend ? std::min(selectRangeStart, newAddress) : newAddress;
+	selectRangeEnd = extend ? std::max(selectRangeEnd, after) : after;
+	updateStatusBarText();
+}
+
+void CtrlDisassemblyView::scrollAddressIntoView()
+{
+	const u32 windowEnd = manager.getNthNextAddress(windowStart, visibleRows);
+
+	if (curAddress < windowStart)
+		windowStart = curAddress;
+	else if (curAddress >= windowEnd)
+		windowStart = manager.getNthPreviousAddress(curAddress, visibleRows - 1);
+
+	scanFunctions();
 }
