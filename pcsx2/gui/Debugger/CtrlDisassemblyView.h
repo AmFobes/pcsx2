@@ -37,7 +37,7 @@ public:
 	void scanFunctions();
 	void clearFunctions() { manager.clear(); };
 	void redraw();
-	void getOpcodeText(u32 address, char* dest);
+	void getOpcodeText(u32 address, wxString &dest);
 	
 	u32 getInstructionSizeAt(u32 address)
 	{
@@ -51,29 +51,41 @@ public:
 	void scrollStepping(u32 newPc);
 	wxDECLARE_EVENT_TABLE();
 private:
-	void drawBranchLine(wxDC& dc, std::map<u32,int>& addressPositions, BranchLine& line);
-	void render(wxDC& dc);
-	void calculatePixelPositions();
-	bool getDisasmAddressText(u32 address, char* dest, bool abbreviateLabels, bool showData);
-	u32 yToAddress(int y);
-	bool curAddressIsVisible();
-	void followBranch();
-	void toggleBreakpoint(bool toggleEnabled);
-	void updateStatusBarText();
-	std::string disassembleRange(u32 start, u32 size);
-	std::string disassembleCurAddress();
+	/*
+		Context menu functions
+	*/
 	void copyInstructions(u32 startAddr, u32 endAddr, bool withDisasm);
 	void disassembleToFile();
+	void assembleOpcode(u32 address, wxString defaultText);
+	void toggleBreakpoint(bool toggleEnabled);
+	void followBranch();
+	void addFunction();
+	void renameFunction();
+	void removefunction();
+
+	void drawBranchLine(wxDC& dc, std::map<u32,int>& addressPositions, const BranchLine& line);
+	void render(wxDC& dc);
+	void calculatePixelPositions();
+	bool getDisasmAddressText(u32 address, wxString &dest, bool abbreviateLabels, bool showData);
+	u32 yToAddress(int y);
+	bool curAddressIsVisible();
+	
+	
+	void updateStatusBarText();
+	wxString disassembleRange(u32 start, u32 size);
+	wxString disassembleCurAddress();
+	
 	void editBreakpoint();
+	
 	std::set<std::string> getSelectedLineArguments();
-	void drawArguments(wxDC& dc, const DisassemblyLineInfo &line, int x, int y, wxColor& textColor,
+	void drawArguments(wxDC& dc, const DisassemblyLineInfo &line, int x, int y, const wxColor& textColor,
 		const std::set<std::string> &currentArguments);
-	void assembleOpcode(u32 address, std::string defaultText);
+	
 
 	void postEvent(wxEventType type, wxString text);
 	void postEvent(wxEventType type, int value);
 
-	void onPopupClick(wxCommandEvent& evt);
+	void onPopupClick(const wxCommandEvent& evt);
 
 	void setCurAddress(u32 newAddress, bool extend = false)
 	{
