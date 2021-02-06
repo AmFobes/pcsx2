@@ -41,8 +41,7 @@ InfoVector iop("IOP");
 InfoVector vu("VU");
 InfoVector vif("VIF");
 
-// Perf is only supported on linux
-#if defined(__linux__) && (defined(ProfileWithPerf) || defined(ENABLE_VTUNE))
+#if defined(ProfileWithPerf) || defined(ENABLE_VTUNE)
 
 ////////////////////////////////////////////////////////////////////////////////
 // Implementation of the Info object
