@@ -84,6 +84,10 @@ void Hle_SetElfPath(const char* elfFileName)
 #endif
 }
 
+const char* Hle_GetHostRoot() {
+	return HostRoot;
+}
+
 namespace R3000A {
 
 #define v0 (psxRegs.GPR.n.v0)

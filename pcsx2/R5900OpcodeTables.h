@@ -20,6 +20,7 @@
 enum Syscall : u8
 {
 	SetGsCrt = 2,
+	LoadExecPS2 = 6,
 	SetVTLBRefillHandler = 13,
 	GetOsdConfigParam = 75,
 	GetOsdConfigParam2 = 111,
